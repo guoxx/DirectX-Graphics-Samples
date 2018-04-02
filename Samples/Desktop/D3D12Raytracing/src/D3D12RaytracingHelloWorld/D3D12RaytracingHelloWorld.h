@@ -15,6 +15,17 @@
 #include "StepTimer.h"
 #include "RaytracingHlslCompat.h"
 
+class Primitive
+{
+public:
+    std::string m_name;
+    ComPtr<ID3D12Resource> m_positionBuffer;
+    ComPtr<ID3D12Resource> m_normalBuffer;
+    ComPtr<ID3D12Resource> m_indexBuffer;
+
+    D3D12_RAYTRACING_GEOMETRY_DESC m_geometryDesc;
+};
+
 namespace GlobalRootSignatureParams {
     enum Value { 
         OutputViewSlot = 0,
@@ -92,6 +103,7 @@ private:
     struct Vertex { float v1, v2, v3; };
     ComPtr<ID3D12Resource> m_indexBuffer;
     ComPtr<ID3D12Resource> m_vertexBuffer;
+    std::vector<Primitive> m_primitives;
 
     // Acceleration structure
     ComPtr<ID3D12Resource> m_accelerationStructure;

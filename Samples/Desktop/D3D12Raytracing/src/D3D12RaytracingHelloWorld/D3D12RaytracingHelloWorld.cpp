@@ -13,6 +13,8 @@
 #include "D3D12RaytracingHelloWorld.h"
 #include "DirectXRaytracingHelper.h"
 #include "CompiledShaders\Raytracing.hlsl.h"
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
 
 using namespace std;
 using namespace DX;
@@ -285,7 +287,47 @@ void D3D12RaytracingHelloWorld::CreateDescriptorHeap()
 // Build geometry used in the sample.
 void D3D12RaytracingHelloWorld::BuildGeometry()
 {
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string err;
+    if (!tinyobj::LoadObj(shapes, materials, err, "CornellBox-Glossy.obj", nullptr))
+    {
+        assert(false);
+    }
+
     auto device = m_deviceResources->GetD3DDevice();
+
+    for (auto shape : shapes)
+    {
+		Primitive prim;
+		prim.m_name = shape.name;
+
+        AllocateUploadBuffer(device,
+            shape.mesh.positions.data(),
+            shape.mesh.positions.size() * sizeof(decltype(shape.mesh.positions)::value_type),
+            &prim.m_positionBuffer);
+        AllocateUploadBuffer(device,
+            shape.mesh.normals.data(),
+            shape.mesh.normals.size() * sizeof(decltype(shape.mesh.normals)::value_type),
+            &prim.m_normalBuffer);
+        AllocateUploadBuffer(device,
+            shape.mesh.indices.data(),
+            shape.mesh.indices.size() * sizeof(decltype(shape.mesh.indices)::value_type),
+            &prim.m_indexBuffer);
+
+        prim.m_geometryDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+        prim.m_geometryDesc.Triangles.IndexBuffer = prim.m_indexBuffer->GetGPUVirtualAddress();
+        prim.m_geometryDesc.Triangles.IndexCount = shape.mesh.indices.size();
+        prim.m_geometryDesc.Triangles.IndexFormat = DXGI_FORMAT_R32_UINT;
+        prim.m_geometryDesc.Triangles.Transform = 0;
+        prim.m_geometryDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+        prim.m_geometryDesc.Triangles.VertexCount = shape.mesh.positions.size() / 3;
+        prim.m_geometryDesc.Triangles.VertexBuffer.StartAddress = prim.m_positionBuffer->GetGPUVirtualAddress();
+        prim.m_geometryDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(float) * 3;
+
+		m_primitives.push_back(prim);
+    }
+
     Index indices[] =
     {
         0, 1, 2
@@ -318,49 +360,65 @@ void D3D12RaytracingHelloWorld::BuildAccelerationStructures()
     // Reset the command list for the acceleration structure construction.
     commandList->Reset(commandAllocator, nullptr);
 
-    D3D12_RAYTRACING_GEOMETRY_DESC geometryDesc = {};
-    geometryDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-    geometryDesc.Triangles.IndexBuffer = m_indexBuffer->GetGPUVirtualAddress();
-    geometryDesc.Triangles.IndexCount = static_cast<UINT>(m_indexBuffer->GetDesc().Width) / sizeof(Index);
-    geometryDesc.Triangles.IndexFormat = DXGI_FORMAT_R16_UINT;
-    geometryDesc.Triangles.Transform = 0;
-    geometryDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
-    geometryDesc.Triangles.VertexCount = static_cast<UINT>(m_vertexBuffer->GetDesc().Width) / sizeof(Vertex);
-    geometryDesc.Triangles.VertexBuffer.StartAddress = m_vertexBuffer->GetGPUVirtualAddress();
-    geometryDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
+    std::vector<D3D12_RAYTRACING_GEOMETRY_DESC> allGeometryDescs;
+    for (auto p : m_primitives)
+    {
+        allGeometryDescs.push_back(p.m_geometryDesc);
+    }
+    {
+        D3D12_RAYTRACING_GEOMETRY_DESC geometryDesc = {};
+        geometryDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+        geometryDesc.Triangles.IndexBuffer = m_indexBuffer->GetGPUVirtualAddress();
+        geometryDesc.Triangles.IndexCount = static_cast<UINT>(m_indexBuffer->GetDesc().Width) / sizeof(Index);
+        geometryDesc.Triangles.IndexFormat = DXGI_FORMAT_R16_UINT;
+        geometryDesc.Triangles.Transform = 0;
+        geometryDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+        geometryDesc.Triangles.VertexCount = static_cast<UINT>(m_vertexBuffer->GetDesc().Width) / sizeof(Vertex);
+        geometryDesc.Triangles.VertexBuffer.StartAddress = m_vertexBuffer->GetGPUVirtualAddress();
+        geometryDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
+        allGeometryDescs.push_back(geometryDesc);
+    }
 
     // Get required sizes for an acceleration structure.
-    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS buildFlags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
-    D3D12_GET_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO_DESC prebuildInfoDesc = {};
-    prebuildInfoDesc.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-    prebuildInfoDesc.Flags = buildFlags;
-    prebuildInfoDesc.NumDescs = 1;
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS buildFlags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
 
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO topLevelPrebuildInfo = {};
-    prebuildInfoDesc.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
-    prebuildInfoDesc.pGeometryDescs = nullptr;
-    if (m_raytracingAPI == RaytracingAPI::FallbackLayer)
     {
-        m_fallbackDevice->GetRaytracingAccelerationStructurePrebuildInfo(&prebuildInfoDesc, &topLevelPrebuildInfo);
+        D3D12_GET_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO_DESC prebuildInfoDesc = {};
+        prebuildInfoDesc.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+        prebuildInfoDesc.Flags = buildFlags;
+        prebuildInfoDesc.NumDescs = 1;
+        prebuildInfoDesc.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+        prebuildInfoDesc.pGeometryDescs = nullptr;
+        if (m_raytracingAPI == RaytracingAPI::FallbackLayer)
+        {
+            m_fallbackDevice->GetRaytracingAccelerationStructurePrebuildInfo(&prebuildInfoDesc, &topLevelPrebuildInfo);
+        }
+        else // DirectX Raytracing
+        {
+            m_dxrDevice->GetRaytracingAccelerationStructurePrebuildInfo(&prebuildInfoDesc, &topLevelPrebuildInfo);
+        }
+        ThrowIfFalse(topLevelPrebuildInfo.ResultDataMaxSizeInBytes > 0);
     }
-    else // DirectX Raytracing
-    {
-        m_dxrDevice->GetRaytracingAccelerationStructurePrebuildInfo(&prebuildInfoDesc, &topLevelPrebuildInfo);
-    }
-    ThrowIfFalse(topLevelPrebuildInfo.ResultDataMaxSizeInBytes > 0);
 
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO bottomLevelPrebuildInfo = {};
-    prebuildInfoDesc.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
-    prebuildInfoDesc.pGeometryDescs = &geometryDesc;
-    if (m_raytracingAPI == RaytracingAPI::FallbackLayer)
     {
-        m_fallbackDevice->GetRaytracingAccelerationStructurePrebuildInfo(&prebuildInfoDesc, &bottomLevelPrebuildInfo);
+        D3D12_GET_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO_DESC prebuildInfoDesc = {};
+        prebuildInfoDesc.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+        prebuildInfoDesc.Flags = buildFlags;
+        prebuildInfoDesc.NumDescs = allGeometryDescs.size();
+        prebuildInfoDesc.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+        prebuildInfoDesc.pGeometryDescs = allGeometryDescs.data();
+        if (m_raytracingAPI == RaytracingAPI::FallbackLayer)
+        {
+            m_fallbackDevice->GetRaytracingAccelerationStructurePrebuildInfo(&prebuildInfoDesc, &bottomLevelPrebuildInfo);
+        }
+        else // DirectX Raytracing
+        {
+            m_dxrDevice->GetRaytracingAccelerationStructurePrebuildInfo(&prebuildInfoDesc, &bottomLevelPrebuildInfo);
+        }
+        ThrowIfFalse(bottomLevelPrebuildInfo.ResultDataMaxSizeInBytes > 0);
     }
-    else // DirectX Raytracing
-    {
-        m_dxrDevice->GetRaytracingAccelerationStructurePrebuildInfo(&prebuildInfoDesc, &bottomLevelPrebuildInfo);
-    }
-    ThrowIfFalse(bottomLevelPrebuildInfo.ResultDataMaxSizeInBytes > 0);
 
     ComPtr<ID3D12Resource> scratchResource;
     AllocateUAVBuffer(device, max(topLevelPrebuildInfo.ScratchDataSizeInBytes, bottomLevelPrebuildInfo.ScratchDataSizeInBytes), &scratchResource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"ScratchResource");
@@ -416,8 +474,8 @@ void D3D12RaytracingHelloWorld::BuildAccelerationStructures()
         bottomLevelBuildDesc.ScratchAccelerationStructureData = { scratchResource->GetGPUVirtualAddress(), scratchResource->GetDesc().Width };
         bottomLevelBuildDesc.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
         bottomLevelBuildDesc.DestAccelerationStructureData = { m_bottomLevelAccelerationStructure->GetGPUVirtualAddress(), bottomLevelPrebuildInfo.ResultDataMaxSizeInBytes };
-        bottomLevelBuildDesc.NumDescs = 1;
-        bottomLevelBuildDesc.pGeometryDescs = &geometryDesc;
+        bottomLevelBuildDesc.NumDescs = allGeometryDescs.size();
+        bottomLevelBuildDesc.pGeometryDescs = allGeometryDescs.data();
     }
 
     // Top Level Acceleration Structure desc
