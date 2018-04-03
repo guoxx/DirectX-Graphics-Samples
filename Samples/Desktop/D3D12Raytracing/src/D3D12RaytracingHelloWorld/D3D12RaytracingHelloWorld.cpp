@@ -69,6 +69,9 @@ D3D12RaytracingHelloWorld::D3D12RaytracingHelloWorld(UINT width, UINT height, st
         exit(EXIT_FAILURE);
     }
 
+    m_camera.SetEyeAtUp(Math::Vector3{0, 0.5, 4}, Math::Vector3{0, 0, 0}, Math::Vector3{0, 1, 0});
+    m_camera.ReverseZ(false);
+
     m_rayGenCB.viewport = { -1.0f, -1.0f, 1.0f, 1.0f };
     UpdateForSizeChange(width, height);
 }
@@ -95,6 +98,7 @@ void D3D12RaytracingHelloWorld::CreateDeviceDependentResources()
     CreateRaytracingPipelineStateObject();
     CreateDescriptorHeap();
     CreateRaytracingOutputResource();
+    CreateConstantBuffers();
     BuildGeometry();
     BuildAccelerationStructures();
     BuildShaderTables();
@@ -128,6 +132,7 @@ void D3D12RaytracingHelloWorld::CreateRootSignatures()
         CD3DX12_ROOT_PARAMETER rootParameters[GlobalRootSignatureParams::Count];
         rootParameters[GlobalRootSignatureParams::OutputViewSlot].InitAsDescriptorTable(1, &UAVDescriptor);
         rootParameters[GlobalRootSignatureParams::AccelerationStructureSlot].InitAsShaderResourceView(0);
+        rootParameters[GlobalRootSignatureParams::PerFrameCBSlot].InitAsConstantBufferView(1);
         CD3DX12_ROOT_SIGNATURE_DESC globalRootSignatureDesc(ARRAYSIZE(rootParameters), rootParameters);
         SerializeAndCreateRaytracingRootSignature(globalRootSignatureDesc, &m_raytracingGlobalRootSignature);
     }
@@ -276,6 +281,24 @@ void D3D12RaytracingHelloWorld::CreateRaytracingOutputResource()
     m_raytracingOutputResourceUAVGpuDescriptor = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_descriptorHeap->GetGPUDescriptorHandleForHeapStart(), m_raytracingOutputResourceUAVDescriptorHeapIndex, m_descriptorSize);
 }
 
+void D3D12RaytracingHelloWorld::CreateConstantBuffers()
+{
+    auto device = m_deviceResources->GetD3DDevice();
+    
+    // Create the constant buffer memory and map the CPU and GPU addresses
+    const D3D12_HEAP_PROPERTIES uploadHeapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+
+    for (int32_t i = 0; i < FrameCount; ++i)
+    {
+        // Allocate one constant buffer per frame, since it gets updated every frame.
+        const D3D12_RESOURCE_DESC constantBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(PerFrameCB));
+
+        PerFrameCB cb;
+        std::memset(&cb, 0x00, sizeof(cb));
+        AllocateUploadBuffer(device, &cb, constantBufferDesc.Width, &m_perFrameCB[i]);
+    }
+}
+
 void D3D12RaytracingHelloWorld::CreateDescriptorHeap()
 {
     auto device = m_deviceResources->GetD3DDevice();
@@ -297,6 +320,99 @@ void D3D12RaytracingHelloWorld::CreateDescriptorHeap()
 // Build geometry used in the sample.
 void D3D12RaytracingHelloWorld::BuildGeometry()
 {
+#if 0
+    struct Vertex
+    {
+        XMFLOAT3 position;
+        XMFLOAT3 normal;
+    };
+
+    auto device = m_deviceResources->GetD3DDevice();
+
+    // Cube indices.
+    uint32_t indices[] =
+    {
+        3,1,0,
+        2,1,3,
+
+        6,4,5,
+        7,4,6,
+
+        11,9,8,
+        10,9,11,
+
+        14,12,13,
+        15,12,14,
+
+        19,17,16,
+        18,17,19,
+
+        22,20,21,
+        23,20,22
+    };
+
+    // Cube vertices positions and corresponding triangle normals.
+    Vertex vertices[] =
+    {
+        { XMFLOAT3(-1.0f, 1.0f, -1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f) },
+        { XMFLOAT3(1.0f, 1.0f, -1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f) },
+        { XMFLOAT3(1.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f) },
+        { XMFLOAT3(-1.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f) },
+
+        { XMFLOAT3(-1.0f, -1.0f, -1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f) },
+        { XMFLOAT3(1.0f, -1.0f, -1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f) },
+        { XMFLOAT3(1.0f, -1.0f, 1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f) },
+        { XMFLOAT3(-1.0f, -1.0f, 1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f) },
+
+        { XMFLOAT3(-1.0f, -1.0f, 1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f) },
+        { XMFLOAT3(-1.0f, -1.0f, -1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f) },
+        { XMFLOAT3(-1.0f, 1.0f, -1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f) },
+        { XMFLOAT3(-1.0f, 1.0f, 1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f) },
+
+        { XMFLOAT3(1.0f, -1.0f, 1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f) },
+        { XMFLOAT3(1.0f, -1.0f, -1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f) },
+        { XMFLOAT3(1.0f, 1.0f, -1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f) },
+        { XMFLOAT3(1.0f, 1.0f, 1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f) },
+
+        { XMFLOAT3(-1.0f, -1.0f, -1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f) },
+        { XMFLOAT3(1.0f, -1.0f, -1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f) },
+        { XMFLOAT3(1.0f, 1.0f, -1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f) },
+        { XMFLOAT3(-1.0f, 1.0f, -1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f) },
+
+        { XMFLOAT3(-1.0f, -1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f) },
+        { XMFLOAT3(1.0f, -1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f) },
+        { XMFLOAT3(1.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f) },
+        { XMFLOAT3(-1.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f) },
+    };
+
+    Primitive prim;
+    prim.m_name = "cube";
+
+    AllocateUploadBuffer(device,
+        vertices,
+        sizeof(vertices),
+        &prim.m_positionBuffer);
+    //AllocateUploadBuffer(device,
+    //    shape.mesh.normals.data(),
+    //    shape.mesh.normals.size() * sizeof(decltype(shape.mesh.normals)::value_type),
+    //    &prim.m_normalBuffer);
+    AllocateUploadBuffer(device,
+        indices,
+        sizeof(indices),
+        &prim.m_indexBuffer);
+
+    prim.m_geometryDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+    prim.m_geometryDesc.Triangles.IndexBuffer = prim.m_indexBuffer->GetGPUVirtualAddress();
+    prim.m_geometryDesc.Triangles.IndexCount = _ARRAYSIZE(indices);
+    prim.m_geometryDesc.Triangles.IndexFormat = DXGI_FORMAT_R32_UINT;
+    prim.m_geometryDesc.Triangles.Transform = 0;
+    prim.m_geometryDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+    prim.m_geometryDesc.Triangles.VertexCount = _ARRAYSIZE(vertices);
+    prim.m_geometryDesc.Triangles.VertexBuffer.StartAddress = prim.m_positionBuffer->GetGPUVirtualAddress();
+    prim.m_geometryDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
+
+    m_primitives.push_back(prim);
+#else
     std::vector<tinyobj::shape_t> shapes;
     std::vector<tinyobj::material_t> materials;
     std::string err;
@@ -337,6 +453,7 @@ void D3D12RaytracingHelloWorld::BuildGeometry()
 
 		m_primitives.push_back(prim);
     }
+#endif
 }
 
 // Build acceleration structures needed for raytracing.
@@ -605,6 +722,35 @@ void D3D12RaytracingHelloWorld::OnUpdate()
     float delta = static_cast<float>(m_timer.GetElapsedSeconds());
     GameInput::Update(delta);
     m_cameraController.Update(delta);
+
+    m_camera.Update();
+    m_perFrameCBContent.viewToWorld = Math::Invert(m_camera.GetViewMatrix());
+    m_perFrameCBContent.projectionToWorld = Math::Invert(m_camera.GetViewProjMatrix());
+
+
+    if (0)
+    {
+        XMVECTOR m_eye = { 0.0f, 2.0f, -5.0f, 1.0f };
+        XMVECTOR m_at = { 0.0f, 0.0f, 0.0f, 1.0f };
+        XMVECTOR right = { 1.0f, 0.0f, 0.0f, 0.0f };
+
+        XMVECTOR direction = XMVector4Normalize(m_at - m_eye);
+        XMVECTOR m_up = XMVector3Normalize(XMVector3Cross(direction, right));
+
+        // Rotate camera around Y axis.
+        XMMATRIX rotate = XMMatrixRotationY(XMConvertToRadians(45.0f));
+        m_eye = XMVector3Transform(m_eye, rotate);
+        m_up = XMVector3Transform(m_up, rotate);
+
+        float fovAngleY = 45.0f;
+        XMMATRIX view = XMMatrixLookAtLH(m_eye, m_at, m_up);
+        XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(fovAngleY), m_aspectRatio, 1.0f, 125.0f);
+        XMMATRIX viewProj = view * proj;
+
+        m_perFrameCBContent.cameraPosition = m_eye;
+        m_perFrameCBContent.viewToWorld = XMMatrixInverse(nullptr, view);
+        m_perFrameCBContent.projectionToWorld = XMMatrixInverse(nullptr, viewProj);
+    }
 }
 
 
@@ -649,10 +795,19 @@ void D3D12RaytracingHelloWorld::DoRaytracing()
     // Bind the heaps, acceleration structure and dispatch rays.    
     if (m_raytracingAPI == RaytracingAPI::FallbackLayer)
     {
+        ID3D12Resource* pCB = m_perFrameCB[m_cbIdx].Get();
+        m_cbIdx = (m_cbIdx + 1) % FrameCount;
+
+        void* pMappedData = nullptr;
+        pCB->Map(0, nullptr, &pMappedData);
+        memcpy(pMappedData, &m_perFrameCBContent, sizeof(m_perFrameCBContent));
+        pCB->Unmap(0, nullptr);
+
         D3D12_FALLBACK_DISPATCH_RAYS_DESC dispatchDesc = {};
         m_fallbackCommandList->SetDescriptorHeaps(1, m_descriptorHeap.GetAddressOf());
         commandList->SetComputeRootDescriptorTable(GlobalRootSignatureParams::OutputViewSlot, m_raytracingOutputResourceUAVGpuDescriptor);
         m_fallbackCommandList->SetTopLevelAccelerationStructure(GlobalRootSignatureParams::AccelerationStructureSlot, m_fallbackTopLevelAccelerationStructurePointer);
+        commandList->SetComputeRootConstantBufferView(GlobalRootSignatureParams::PerFrameCBSlot, pCB->GetGPUVirtualAddress());
         DispatchRays(m_fallbackCommandList.Get(), m_fallbackStateObject.Get(), &dispatchDesc);
     }
     else // DirectX Raytracing

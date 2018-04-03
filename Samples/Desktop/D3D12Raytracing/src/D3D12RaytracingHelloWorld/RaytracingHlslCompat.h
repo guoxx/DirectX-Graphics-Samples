@@ -11,6 +11,19 @@
 
 #pragma once
 
+#ifdef __cplusplus
+#include <DirectXMath.h>
+typedef DirectX::XMMATRIX float4x4;
+typedef DirectX::XMVECTOR float4;
+#endif
+
+struct PerFrameCB
+{
+    float4x4 projectionToWorld;
+    float4x4 viewToWorld;
+    float4 cameraPosition;
+};
+
 struct Viewport
 {
     float left;

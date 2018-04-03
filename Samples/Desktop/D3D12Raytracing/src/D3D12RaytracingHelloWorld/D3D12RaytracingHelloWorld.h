@@ -33,6 +33,7 @@ namespace GlobalRootSignatureParams {
     enum Value { 
         OutputViewSlot = 0,
         AccelerationStructureSlot,
+        PerFrameCBSlot,
         Count 
     };
 }
@@ -100,6 +101,9 @@ private:
     
     // Raytracing scene
     RayGenConstantBuffer m_rayGenCB;
+    PerFrameCB m_perFrameCBContent;
+    ComPtr<ID3D12Resource> m_perFrameCB[FrameCount];
+    uint32_t m_cbIdx = 0;
 
     // Geometry
     std::vector<Primitive> m_primitives;
@@ -144,6 +148,7 @@ private:
     void CreateRaytracingPipelineStateObject();
     void CreateDescriptorHeap();
     void CreateRaytracingOutputResource();
+    void CreateConstantBuffers();
     void BuildGeometry();
     void BuildAccelerationStructures();
     void BuildShaderTables();

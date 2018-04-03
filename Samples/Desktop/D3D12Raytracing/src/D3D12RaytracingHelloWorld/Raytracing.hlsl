@@ -14,6 +14,7 @@
 RaytracingAccelerationStructure Scene : register(t0, space0);
 RWTexture2D<float4> RenderTarget : register(u0);
 ConstantBuffer<RayGenConstantBuffer> g_rayGenCB : register(b0);
+ConstantBuffer<PerFrameCB> g_perFrameCB: register(b1);
 
 typedef BuiltInTriangleIntersectionAttributes MyAttributes;
 struct HitData
@@ -27,35 +28,40 @@ bool IsInsideViewport(float2 p, Viewport viewport)
         && (p.y >= viewport.top && p.y <= viewport.bottom);
 }
 
+inline void GenerateCameraRay(uint2 index, out float3 origin, out float3 direction)
+{
+    float2 ndc = (index + 0.5) / DispatchRaysDimensions() * 2.0 - 1.0;
+    ndc.y = -ndc.y;
+
+    float4 originCS = float4(0, 0, 0, 1);
+    float4 targetCS = float4(ndc, 1, 1);
+    float4 originWS = mul(originCS, g_perFrameCB.viewToWorld);
+    originWS /= originWS.w;
+    float4 targetWS = mul(targetCS, g_perFrameCB.projectionToWorld);
+    targetWS /= targetWS.w;
+
+    origin = originWS.xyz;
+    direction = normalize(targetWS.xyz - origin);
+}
+
 [shader("raygeneration")]
 void MyRaygenShader()
 {
-    float2 lerpValues = (float2)DispatchRaysIndex() / DispatchRaysDimensions();
+    float3 rayDir;
+    float3 origin;
+    
+    // Generate a ray for a camera pixel corresponding to an index from the dispatched 2D grid.
+    GenerateCameraRay(DispatchRaysIndex(), origin, rayDir);
 
-    // Orthographic projection since we're raytracing in screen space.
-    float3 rayDir = float3(0, 0, 1);
-    float3 origin = float3(
-        lerp(g_rayGenCB.viewport.left, g_rayGenCB.viewport.right, lerpValues.x),
-        lerp(g_rayGenCB.viewport.top, g_rayGenCB.viewport.bottom, lerpValues.y),
-        0.0f);
+    // Trace the ray.
+    RayDesc myRay = { origin, 0.0f, rayDir, 10000.0f };
+    HitData payload = { float4(0, 0, 0, 0) };
+    //TraceRay(Scene, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, ~0, 0, 1, 0, myRay, payload);
+    // TODO
+    TraceRay(Scene, 0, ~0, 0, 0, 0, myRay, payload);
 
-    if (IsInsideViewport(origin.xy, g_rayGenCB.stencil))
-    {
-        // Trace the ray.
-        RayDesc myRay = { origin, 0.0f, rayDir, 10000.0f };
-        HitData payload = { float4(0, 0, 0, 0) };
-        //TraceRay(Scene, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, ~0, 0, 1, 0, myRay, payload);
-        // TODO
-        TraceRay(Scene, 0, ~0, 0, 0, 0, myRay, payload);
-
-        // Write the raytraced color to the output texture.
-        RenderTarget[DispatchRaysIndex()] = payload.color;
-    }
-    else
-    {
-        // Render interpolated DispatchRaysIndex outside the stencil window
-        RenderTarget[DispatchRaysIndex()] = float4(lerpValues, 0, 1);
-    }
+    // Write the raytraced color to the output texture.
+    RenderTarget[DispatchRaysIndex()] = payload.color;
 }
 
 [shader("closesthit")]
