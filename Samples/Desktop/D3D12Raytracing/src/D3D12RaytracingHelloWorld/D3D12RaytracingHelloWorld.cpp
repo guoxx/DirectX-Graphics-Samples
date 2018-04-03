@@ -15,6 +15,12 @@
 #include "CompiledShaders\Raytracing.hlsl.h"
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
+#include "Math/Vector.h"
+
+namespace GameCore
+{
+    extern HWND g_hWnd;
+}
 
 using namespace std;
 using namespace DX;
@@ -26,7 +32,8 @@ const wchar_t* D3D12RaytracingHelloWorld::c_missShaderName = L"MyMissShader";
 
 D3D12RaytracingHelloWorld::D3D12RaytracingHelloWorld(UINT width, UINT height, std::wstring name) :
     DXSample(width, height, name),
-    m_raytracingOutputResourceUAVDescriptorHeapIndex(UINT_MAX)
+    m_raytracingOutputResourceUAVDescriptorHeapIndex(UINT_MAX),
+    m_cameraController{m_camera, Math::Vector3{0, 1, 0}}
 {
     m_isDxrSupported = EnableRaytracing();
     if (!m_isDxrSupported)
@@ -68,6 +75,9 @@ D3D12RaytracingHelloWorld::D3D12RaytracingHelloWorld(UINT width, UINT height, st
 
 void D3D12RaytracingHelloWorld::OnInit()
 {
+    GameCore::g_hWnd = Win32Application::GetHwnd();
+    GameInput::Initialize();
+
     m_deviceResources->SetWindow(Win32Application::GetHwnd(), m_width, m_height);
 
     m_deviceResources->CreateDeviceResources();
@@ -317,36 +327,16 @@ void D3D12RaytracingHelloWorld::BuildGeometry()
 
         prim.m_geometryDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
         prim.m_geometryDesc.Triangles.IndexBuffer = prim.m_indexBuffer->GetGPUVirtualAddress();
-        prim.m_geometryDesc.Triangles.IndexCount = shape.mesh.indices.size();
+        prim.m_geometryDesc.Triangles.IndexCount = UINT(shape.mesh.indices.size());
         prim.m_geometryDesc.Triangles.IndexFormat = DXGI_FORMAT_R32_UINT;
         prim.m_geometryDesc.Triangles.Transform = 0;
         prim.m_geometryDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
-        prim.m_geometryDesc.Triangles.VertexCount = shape.mesh.positions.size() / 3;
+        prim.m_geometryDesc.Triangles.VertexCount = UINT(shape.mesh.positions.size()) / 3;
         prim.m_geometryDesc.Triangles.VertexBuffer.StartAddress = prim.m_positionBuffer->GetGPUVirtualAddress();
         prim.m_geometryDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(float) * 3;
 
 		m_primitives.push_back(prim);
     }
-
-    Index indices[] =
-    {
-        0, 1, 2
-    };
-
-    float depthValue = 1.0;
-    float offset = 0.7f;
-    Vertex vertices[] =
-    {
-        // The sample raytraces in screen space coordinates.
-        // Since DirectX screen space coordinates are right handed (i.e. Y axis points down).
-        // Define the vertices in counter clockwise order ~ clockwise in left handed.
-        { 0, -offset, depthValue },
-        { -offset, offset, depthValue },
-        { offset, offset, depthValue }
-    };
-
-    AllocateUploadBuffer(device, vertices, sizeof(vertices), &m_vertexBuffer);
-    AllocateUploadBuffer(device, indices, sizeof(indices), &m_indexBuffer);
 }
 
 // Build acceleration structures needed for raytracing.
@@ -364,19 +354,6 @@ void D3D12RaytracingHelloWorld::BuildAccelerationStructures()
     for (auto p : m_primitives)
     {
         allGeometryDescs.push_back(p.m_geometryDesc);
-    }
-    {
-        D3D12_RAYTRACING_GEOMETRY_DESC geometryDesc = {};
-        geometryDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-        geometryDesc.Triangles.IndexBuffer = m_indexBuffer->GetGPUVirtualAddress();
-        geometryDesc.Triangles.IndexCount = static_cast<UINT>(m_indexBuffer->GetDesc().Width) / sizeof(Index);
-        geometryDesc.Triangles.IndexFormat = DXGI_FORMAT_R16_UINT;
-        geometryDesc.Triangles.Transform = 0;
-        geometryDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
-        geometryDesc.Triangles.VertexCount = static_cast<UINT>(m_vertexBuffer->GetDesc().Width) / sizeof(Vertex);
-        geometryDesc.Triangles.VertexBuffer.StartAddress = m_vertexBuffer->GetGPUVirtualAddress();
-        geometryDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
-        allGeometryDescs.push_back(geometryDesc);
     }
 
     // Get required sizes for an acceleration structure.
@@ -406,7 +383,7 @@ void D3D12RaytracingHelloWorld::BuildAccelerationStructures()
         D3D12_GET_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO_DESC prebuildInfoDesc = {};
         prebuildInfoDesc.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
         prebuildInfoDesc.Flags = buildFlags;
-        prebuildInfoDesc.NumDescs = allGeometryDescs.size();
+        prebuildInfoDesc.NumDescs = UINT(allGeometryDescs.size());
         prebuildInfoDesc.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
         prebuildInfoDesc.pGeometryDescs = allGeometryDescs.data();
         if (m_raytracingAPI == RaytracingAPI::FallbackLayer)
@@ -474,7 +451,7 @@ void D3D12RaytracingHelloWorld::BuildAccelerationStructures()
         bottomLevelBuildDesc.ScratchAccelerationStructureData = { scratchResource->GetGPUVirtualAddress(), scratchResource->GetDesc().Width };
         bottomLevelBuildDesc.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
         bottomLevelBuildDesc.DestAccelerationStructureData = { m_bottomLevelAccelerationStructure->GetGPUVirtualAddress(), bottomLevelPrebuildInfo.ResultDataMaxSizeInBytes };
-        bottomLevelBuildDesc.NumDescs = allGeometryDescs.size();
+        bottomLevelBuildDesc.NumDescs = UINT(allGeometryDescs.size());
         bottomLevelBuildDesc.pGeometryDescs = allGeometryDescs.data();
     }
 
@@ -624,6 +601,10 @@ void D3D12RaytracingHelloWorld::OnUpdate()
 {
     m_timer.Tick();
     CalculateFrameStats();
+
+    float delta = static_cast<float>(m_timer.GetElapsedSeconds());
+    GameInput::Update(delta);
+    m_cameraController.Update(delta);
 }
 
 
@@ -762,8 +743,6 @@ void D3D12RaytracingHelloWorld::ReleaseDeviceDependentResources()
     m_descriptorHeap.Reset();
     m_descriptorsAllocated = 0;
     m_raytracingOutputResourceUAVDescriptorHeapIndex = UINT_MAX;
-    m_indexBuffer.Reset();
-    m_vertexBuffer.Reset();
 
     m_accelerationStructure.Reset();
     m_bottomLevelAccelerationStructure.Reset();

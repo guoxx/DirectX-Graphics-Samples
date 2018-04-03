@@ -14,6 +14,9 @@
 #include "DXSample.h"
 #include "StepTimer.h"
 #include "RaytracingHlslCompat.h"
+#include "Camera.h"
+#include "GameInput.h"
+#include "CameraController.h"
 
 class Primitive
 {
@@ -99,10 +102,6 @@ private:
     RayGenConstantBuffer m_rayGenCB;
 
     // Geometry
-    typedef UINT16 Index;
-    struct Vertex { float v1, v2, v3; };
-    ComPtr<ID3D12Resource> m_indexBuffer;
-    ComPtr<ID3D12Resource> m_vertexBuffer;
     std::vector<Primitive> m_primitives;
 
     // Acceleration structure
@@ -128,6 +127,9 @@ private:
     RaytracingAPI m_raytracingAPI;
     bool m_forceComputeFallback;
     StepTimer m_timer;
+
+    Math::Camera m_camera;
+    GameCore::CameraController m_cameraController;
 
     void ParseCommandLineArgs(WCHAR* argv[], int argc);
     void RecreateD3D();

@@ -46,7 +46,7 @@ void MyRaygenShader()
         HitData payload = { float4(0, 0, 0, 0) };
         //TraceRay(Scene, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, ~0, 0, 1, 0, myRay, payload);
         // TODO
-        TraceRay(Scene, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, ~0, 0, 0, 0, myRay, payload);
+        TraceRay(Scene, 0, ~0, 0, 0, 0, myRay, payload);
 
         // Write the raytraced color to the output texture.
         RenderTarget[DispatchRaysIndex()] = payload.color;
