@@ -132,6 +132,16 @@ void D3D12RaytracingHelloWorld::CreateRootSignatures()
         rootParameters[GlobalRootSignatureParams::OutputViewSlot].InitAsDescriptorTable(1, &UAVDescriptor);
         rootParameters[GlobalRootSignatureParams::AccelerationStructureSlot].InitAsShaderResourceView(0);
         rootParameters[GlobalRootSignatureParams::PerFrameCBSlot].InitAsConstantBufferView(1);
+        {
+            CD3DX12_DESCRIPTOR_RANGE descriptor;
+            descriptor.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 16, 16);
+            rootParameters[GlobalRootSignatureParams::NormalBuffersSlot].InitAsDescriptorTable(1, &descriptor);
+        }
+        {
+            CD3DX12_DESCRIPTOR_RANGE descriptor;
+            descriptor.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 16, 32);
+            rootParameters[GlobalRootSignatureParams::IndexBuffersSlot].InitAsDescriptorTable(1, &descriptor);
+        }
         CD3DX12_ROOT_SIGNATURE_DESC globalRootSignatureDesc(ARRAYSIZE(rootParameters), rootParameters);
         SerializeAndCreateRaytracingRootSignature(globalRootSignatureDesc, &m_raytracingGlobalRootSignature);
     }
@@ -306,7 +316,9 @@ void D3D12RaytracingHelloWorld::CreateDescriptorHeap()
     // Allocate a heap for 3 descriptors:
     // 2 - bottom and top level acceleration structure fallback wrapped pointers
     // 1 - raytracing output texture SRV
-    descriptorHeapDesc.NumDescriptors = 3; 
+    // 16 - normal buffers SRV
+    // 16 - index buffers SRV
+    descriptorHeapDesc.NumDescriptors = 3 + 16 + 16; 
     descriptorHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     descriptorHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     descriptorHeapDesc.NodeMask = 0;
@@ -422,8 +434,10 @@ void D3D12RaytracingHelloWorld::BuildGeometry()
 
     auto device = m_deviceResources->GetD3DDevice();
 
-    for (auto shape : shapes)
+    for (int i = 0; i < shapes.size(); ++i)
     {
+        tinyobj::shape_t& shape = shapes[i];
+
 		Primitive prim;
 		prim.m_name = shape.name;
 
@@ -453,8 +467,72 @@ void D3D12RaytracingHelloWorld::BuildGeometry()
         int32_t materialId = shape.mesh.material_ids[0];
         const tinyobj::material_t& material = materials[materialId];
         prim.m_material.diffuse = XMVECTOR{material.diffuse[0], material.diffuse[1], material.diffuse[2], 1};
+        prim.m_material.normalBufferIdx = i;
+        prim.m_material.indexBufferIdx = i;
 
 		m_primitives.push_back(prim);
+    }
+
+    for (int i = 0; i < shapes.size(); ++i)
+    {
+        tinyobj::shape_t& shape = shapes[i];
+        const Primitive& prim = m_primitives[i];
+
+        D3D12_CPU_DESCRIPTOR_HANDLE cpuDescriptorHandle;
+        UINT descriptorHeapIndex = AllocateDescriptor(&cpuDescriptorHandle, 0xFFFFFFFF);
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Buffer.FirstElement = 0;
+        srvDesc.Buffer.NumElements = shape.mesh.normals.size() / 3;
+        srvDesc.Buffer.StructureByteStride = sizeof(float) * 3;
+        srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+
+        device->CreateShaderResourceView(prim.m_normalBuffer.Get(), &srvDesc, cpuDescriptorHandle);
+
+        if (i == 0)
+        {
+            m_normalBuffersSRVGpuDescriptor = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_descriptorHeap->GetGPUDescriptorHandleForHeapStart(), descriptorHeapIndex, m_descriptorSize);
+        }
+    }
+
+    for (int i = shapes.size(); i < 16; ++i)
+    {
+        D3D12_CPU_DESCRIPTOR_HANDLE cpuDescriptorHandle;
+        UINT descriptorHeapIndex = AllocateDescriptor(&cpuDescriptorHandle, 0xFFFFFFFF);
+    }
+
+    for (int i = 0; i < shapes.size(); ++i)
+    {
+        tinyobj::shape_t& shape = shapes[i];
+        const Primitive& prim = m_primitives[i];
+
+        D3D12_CPU_DESCRIPTOR_HANDLE cpuDescriptorHandle;
+        UINT descriptorHeapIndex = AllocateDescriptor(&cpuDescriptorHandle, 0xFFFFFFFF);
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Buffer.FirstElement = 0;
+        srvDesc.Buffer.NumElements = shape.mesh.indices.size() / 3;
+        srvDesc.Buffer.StructureByteStride = sizeof(uint32_t) * 3;
+        srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+
+        device->CreateShaderResourceView(prim.m_indexBuffer.Get(), &srvDesc, cpuDescriptorHandle);
+
+        if (i == 0)
+        {
+            m_indexBuffersSRVGpuDescriptor = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_descriptorHeap->GetGPUDescriptorHandleForHeapStart(), descriptorHeapIndex, m_descriptorSize);
+        }
+    }
+
+    for (int i = shapes.size(); i < 16; ++i)
+    {
+        D3D12_CPU_DESCRIPTOR_HANDLE cpuDescriptorHandle;
+        UINT descriptorHeapIndex = AllocateDescriptor(&cpuDescriptorHandle, 0xFFFFFFFF);
     }
 #endif
 }
@@ -818,6 +896,8 @@ void D3D12RaytracingHelloWorld::DoRaytracing()
         commandList->SetComputeRootDescriptorTable(GlobalRootSignatureParams::OutputViewSlot, m_raytracingOutputResourceUAVGpuDescriptor);
         m_fallbackCommandList->SetTopLevelAccelerationStructure(GlobalRootSignatureParams::AccelerationStructureSlot, m_fallbackTopLevelAccelerationStructurePointer);
         commandList->SetComputeRootConstantBufferView(GlobalRootSignatureParams::PerFrameCBSlot, pCB->GetGPUVirtualAddress());
+        commandList->SetComputeRootDescriptorTable(GlobalRootSignatureParams::NormalBuffersSlot, m_normalBuffersSRVGpuDescriptor);
+        commandList->SetComputeRootDescriptorTable(GlobalRootSignatureParams::IndexBuffersSlot, m_indexBuffersSRVGpuDescriptor);
         DispatchRays(m_fallbackCommandList.Get(), m_fallbackStateObject.Get(), &dispatchDesc);
     }
     else // DirectX Raytracing

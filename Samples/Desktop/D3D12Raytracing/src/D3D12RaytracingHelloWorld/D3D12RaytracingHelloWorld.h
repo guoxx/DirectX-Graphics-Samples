@@ -36,6 +36,8 @@ namespace GlobalRootSignatureParams {
         OutputViewSlot = 0,
         AccelerationStructureSlot,
         PerFrameCBSlot,
+        NormalBuffersSlot,
+        IndexBuffersSlot,
         Count 
     };
 }
@@ -118,6 +120,9 @@ private:
     ComPtr<ID3D12Resource> m_raytracingOutput;
     D3D12_GPU_DESCRIPTOR_HANDLE m_raytracingOutputResourceUAVGpuDescriptor;
     UINT m_raytracingOutputResourceUAVDescriptorHeapIndex;
+
+    D3D12_GPU_DESCRIPTOR_HANDLE m_normalBuffersSRVGpuDescriptor;
+    D3D12_GPU_DESCRIPTOR_HANDLE m_indexBuffersSRVGpuDescriptor;
 
     // Shader tables
     static const wchar_t* c_hitGroupName;

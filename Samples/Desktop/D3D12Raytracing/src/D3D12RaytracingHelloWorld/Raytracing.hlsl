@@ -14,8 +14,8 @@
 RaytracingAccelerationStructure Scene : register(t0, space0);
 RWTexture2D<float4> RenderTarget : register(u0);
 ConstantBuffer<PerFrameCB> g_perFrameCB: register(b1);
-//StructuredBuffer<float3> g_normalBuffers[] : register(t1);
-//StructuredBuffer<uint3> g_indicesBuffers[] : register(t2);
+StructuredBuffer<float3> g_normalBuffers[16] : register(t16);
+StructuredBuffer<uint3> g_indicesBuffers[16] : register(t32);
 
 ConstantBuffer<PerMaterialCB> materialCB : register(b0);
 
@@ -71,20 +71,21 @@ float3 HitAttribute(float3 vertexAttribute[3], BuiltInTriangleIntersectionAttrib
 [shader("closesthit")]
 void MyClosestHitShader(inout HitData payload : SV_RayPayload, in MyAttributes attr : SV_IntersectionAttributes)
 {
-    //StructuredBuffer<uint3> indexBuffer = g_indicesBuffers[materialCB.indexBufferIdx];
-    //uint3 indices = indexBuffer[PrimitiveIndex()];
+    StructuredBuffer<uint3> indexBuffer = g_indicesBuffers[materialCB.indexBufferIdx];
+    uint3 indices = indexBuffer[PrimitiveIndex()];
 
-    //StructuredBuffer<float3> normalBuffer = g_normalBuffers[materialCB.normalBufferIdx];
-    //float3 vertexNormals[3] = { 
-    //    normalBuffer[indices.x],
-    //    normalBuffer[indices.y], 
-    //    normalBuffer[indices.z] 
-    //};
+    StructuredBuffer<float3> normalBuffer = g_normalBuffers[materialCB.normalBufferIdx];
+    float3 vertexNormals[3] = { 
+        normalBuffer[indices.x],
+        normalBuffer[indices.y], 
+        normalBuffer[indices.z] 
+    };
 
-    //float3 normal = HitAttribute(vertexNormals, attr);
+    float3 normal = HitAttribute(vertexNormals, attr);
 
     float3 barycentrics = float3(1 - attr.barycentrics.x - attr.barycentrics.y, attr.barycentrics.x, attr.barycentrics.y);
-    payload.color = float4(materialCB.diffuse.xyz, 1);
+    //payload.color = float4(materialCB.diffuse.xyz, 1);
+    payload.color = float4(normal, 1);
 }
 
 [shader("miss")]

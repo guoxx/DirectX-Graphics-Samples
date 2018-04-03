@@ -27,7 +27,7 @@ struct PerFrameCB
 struct PerMaterialCB
 {
     float4 diffuse;
-    //int normalBufferIdx;
-    //int indexBufferIdx;
-    //int dummy[2];
+    int normalBufferIdx;
+    int indexBufferIdx;
+    int dummy[2];
 };
