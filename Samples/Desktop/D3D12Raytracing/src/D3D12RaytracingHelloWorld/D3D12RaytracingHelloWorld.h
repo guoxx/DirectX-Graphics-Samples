@@ -27,6 +27,8 @@ public:
     ComPtr<ID3D12Resource> m_indexBuffer;
 
     D3D12_RAYTRACING_GEOMETRY_DESC m_geometryDesc;
+
+    PerMaterialCB m_material;
 };
 
 namespace GlobalRootSignatureParams {
@@ -100,7 +102,6 @@ private:
     UINT m_descriptorSize;
     
     // Raytracing scene
-    RayGenConstantBuffer m_rayGenCB;
     PerFrameCB m_perFrameCBContent;
     ComPtr<ID3D12Resource> m_perFrameCB[FrameCount];
     uint32_t m_cbIdx = 0;
@@ -124,13 +125,15 @@ private:
     static const wchar_t* c_closestHitShaderName;
     static const wchar_t* c_missShaderName;
     ComPtr<ID3D12Resource> m_missShaderTable;
-    ComPtr<ID3D12Resource> m_hitGroupShaderTable;
     ComPtr<ID3D12Resource> m_rayGenShaderTable;
+    ComPtr<ID3D12Resource> m_hitGroupShaderTable;
     
     // Application state
     RaytracingAPI m_raytracingAPI;
     bool m_forceComputeFallback;
     StepTimer m_timer;
+
+    int32_t m_shaderRecordSize = 0;
 
     Math::Camera m_camera;
     GameCore::CameraController m_cameraController;

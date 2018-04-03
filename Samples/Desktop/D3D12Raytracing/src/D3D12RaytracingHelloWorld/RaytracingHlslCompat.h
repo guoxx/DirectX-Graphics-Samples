@@ -24,16 +24,10 @@ struct PerFrameCB
     float4 cameraPosition;
 };
 
-struct Viewport
+struct PerMaterialCB
 {
-    float left;
-    float top;
-    float right;
-    float bottom;
-};
-
-struct RayGenConstantBuffer
-{
-    Viewport viewport;
-    Viewport stencil;
+    float4 diffuse;
+    //int normalBufferIdx;
+    //int indexBufferIdx;
+    //int dummy[2];
 };

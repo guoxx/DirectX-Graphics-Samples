@@ -13,20 +13,17 @@
 
 RaytracingAccelerationStructure Scene : register(t0, space0);
 RWTexture2D<float4> RenderTarget : register(u0);
-ConstantBuffer<RayGenConstantBuffer> g_rayGenCB : register(b0);
 ConstantBuffer<PerFrameCB> g_perFrameCB: register(b1);
+//StructuredBuffer<float3> g_normalBuffers[] : register(t1);
+//StructuredBuffer<uint3> g_indicesBuffers[] : register(t2);
+
+ConstantBuffer<PerMaterialCB> materialCB : register(b0);
 
 typedef BuiltInTriangleIntersectionAttributes MyAttributes;
 struct HitData
 {
     float4 color;
 };
-
-bool IsInsideViewport(float2 p, Viewport viewport)
-{
-    return (p.x >= viewport.left && p.x <= viewport.right)
-        && (p.y >= viewport.top && p.y <= viewport.bottom);
-}
 
 inline void GenerateCameraRay(uint2 index, out float3 origin, out float3 direction)
 {
@@ -58,17 +55,36 @@ void MyRaygenShader()
     HitData payload = { float4(0, 0, 0, 0) };
     //TraceRay(Scene, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, ~0, 0, 1, 0, myRay, payload);
     // TODO
-    TraceRay(Scene, 0, ~0, 0, 0, 0, myRay, payload);
+    TraceRay(Scene, 0, ~0, 0, 1, 0, myRay, payload);
 
     // Write the raytraced color to the output texture.
     RenderTarget[DispatchRaysIndex()] = payload.color;
 }
 
+float3 HitAttribute(float3 vertexAttribute[3], BuiltInTriangleIntersectionAttributes attr)
+{
+    return vertexAttribute[0] +
+        attr.barycentrics.x * (vertexAttribute[1] - vertexAttribute[0]) +
+        attr.barycentrics.y * (vertexAttribute[2] - vertexAttribute[0]);
+}
+
 [shader("closesthit")]
 void MyClosestHitShader(inout HitData payload : SV_RayPayload, in MyAttributes attr : SV_IntersectionAttributes)
 {
+    //StructuredBuffer<uint3> indexBuffer = g_indicesBuffers[materialCB.indexBufferIdx];
+    //uint3 indices = indexBuffer[PrimitiveIndex()];
+
+    //StructuredBuffer<float3> normalBuffer = g_normalBuffers[materialCB.normalBufferIdx];
+    //float3 vertexNormals[3] = { 
+    //    normalBuffer[indices.x],
+    //    normalBuffer[indices.y], 
+    //    normalBuffer[indices.z] 
+    //};
+
+    //float3 normal = HitAttribute(vertexNormals, attr);
+
     float3 barycentrics = float3(1 - attr.barycentrics.x - attr.barycentrics.y, attr.barycentrics.x, attr.barycentrics.y);
-    payload.color = float4(barycentrics, 1);
+    payload.color = float4(materialCB.diffuse.xyz, 1);
 }
 
 [shader("miss")]

@@ -16,17 +16,43 @@
 class ShaderRecord
 {
 public:
-    ShaderRecord(void* pShaderIdentifier, UINT shaderIdentifierSize) :
-        shaderIdentifier(pShaderIdentifier, shaderIdentifierSize)
+    struct PointerWithSize {
+        void *ptr;
+        UINT size;
+
+        PointerWithSize() : ptr(nullptr), size(0) {}
+        PointerWithSize(void* _ptr, UINT _size) : ptr(_ptr), size(_size) {};
+    };
+
+    ShaderRecord(void* pShaderIdentifier, UINT shaderIdentifierSize)
     {
+        shaderIdentifierTbl.push_back(PointerWithSize{ pShaderIdentifier, shaderIdentifierSize });
+        localRootArgumentsTbl.push_back(PointerWithSize{ nullptr, 0 });
     }
 
-    ShaderRecord(void* pShaderIdentifier, UINT shaderIdentifierSize, void* pLocalRootArguments, UINT localRootArgumentsSize) :
-        shaderIdentifier(pShaderIdentifier, shaderIdentifierSize),
-        localRootArguments(pLocalRootArguments, localRootArgumentsSize)
+    ShaderRecord(void* pShaderIdentifier, UINT shaderIdentifierSize, void* pLocalRootArguments, UINT localRootArgumentsSize)
     {
+        shaderIdentifierTbl.push_back(PointerWithSize{ pShaderIdentifier, shaderIdentifierSize });
+        localRootArgumentsTbl.push_back(PointerWithSize{ pLocalRootArguments, localRootArgumentsSize });
     }
-    UINT Size() { return shaderIdentifier.size + localRootArguments.size; }
+
+    ShaderRecord(std::vector<PointerWithSize> shaders, std::vector<PointerWithSize> rootArgs)
+    {
+        shaderIdentifierTbl = shaders;
+        localRootArgumentsTbl = rootArgs;
+    }
+
+    UINT SizePerEntry()
+    {
+        return shaderIdentifierTbl[0].size + localRootArgumentsTbl[0].size;
+    }
+
+    UINT Size()
+    {
+        UINT sizePerEntry = SizePerEntry();
+        UINT numEntries = UINT(shaderIdentifierTbl.size());
+        return sizePerEntry * numEntries;
+    }
 
     void AllocateAsUploadBuffer(ID3D12Device* pDevice, ID3D12Resource **ppResource, const wchar_t* resourceName = nullptr)
     {
@@ -44,23 +70,26 @@ public:
         {
             (*ppResource)->SetName(resourceName);
         }
+
         uint8_t *pMappedData;
         (*ppResource)->Map(0, nullptr, reinterpret_cast<void**>(&pMappedData));
-        memcpy(pMappedData, shaderIdentifier.ptr, shaderIdentifier.size);
-        memcpy(pMappedData + shaderIdentifier.size, localRootArguments.ptr, localRootArguments.size);
+
+        UINT sizePerEntry = SizePerEntry();
+        for (int32_t i = 0; i < shaderIdentifierTbl.size(); ++i)
+        {
+            uint8_t* pData = pMappedData + sizePerEntry * i;
+            memcpy(pData, shaderIdentifierTbl[i].ptr, shaderIdentifierTbl[i].size);
+            if (localRootArgumentsTbl[i].ptr)
+            {
+                memcpy(pData + shaderIdentifierTbl[i].size, localRootArgumentsTbl[i].ptr, localRootArgumentsTbl[i].size);
+            }
+        }
+
         (*ppResource)->Unmap(0, nullptr);
     }
 
-    struct PointerWithSize {
-        void *ptr;
-        UINT size;
-
-        PointerWithSize() : ptr(nullptr), size(0) {}
-        PointerWithSize(void* _ptr, UINT _size) : ptr(_ptr), size(_size) {};
-    };
-    PointerWithSize shaderIdentifier;
-    PointerWithSize localRootArguments;
-
+    std::vector<PointerWithSize> shaderIdentifierTbl;
+    std::vector<PointerWithSize> localRootArgumentsTbl;
 };
 
 inline void AllocateUAVBuffer(ID3D12Device* pDevice, UINT64 bufferSize, ID3D12Resource **ppResource, D3D12_RESOURCE_STATES initialResourceState = D3D12_RESOURCE_STATE_COMMON, const wchar_t* resourceName = nullptr)

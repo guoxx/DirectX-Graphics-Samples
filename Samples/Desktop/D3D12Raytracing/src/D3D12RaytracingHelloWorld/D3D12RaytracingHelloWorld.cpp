@@ -72,7 +72,6 @@ D3D12RaytracingHelloWorld::D3D12RaytracingHelloWorld(UINT width, UINT height, st
     m_camera.SetEyeAtUp(Math::Vector3{0, 0.5, 4}, Math::Vector3{0, 0, 0}, Math::Vector3{0, 1, 0});
     m_camera.ReverseZ(false);
 
-    m_rayGenCB.viewport = { -1.0f, -1.0f, 1.0f, 1.0f };
     UpdateForSizeChange(width, height);
 }
 
@@ -142,7 +141,7 @@ void D3D12RaytracingHelloWorld::CreateRootSignatures()
     {
         CD3DX12_DESCRIPTOR_RANGE UAVDescriptor;
         CD3DX12_ROOT_PARAMETER rootParameters[LocalRootSignatureParams::Count];
-        rootParameters[LocalRootSignatureParams::ViewportConstantSlot].InitAsConstants(SizeOfInUint32(m_rayGenCB), 0, 0);
+        rootParameters[LocalRootSignatureParams::ViewportConstantSlot].InitAsConstants(SizeOfInUint32(sizeof(PerMaterialCB)), 0, 0);
         CD3DX12_ROOT_SIGNATURE_DESC localRootSignatureDesc(ARRAYSIZE(rootParameters), rootParameters);
         localRootSignatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
         SerializeAndCreateRaytracingRootSignature(localRootSignatureDesc, &m_raytracingLocalRootSignature);
@@ -451,6 +450,10 @@ void D3D12RaytracingHelloWorld::BuildGeometry()
         prim.m_geometryDesc.Triangles.VertexBuffer.StartAddress = prim.m_positionBuffer->GetGPUVirtualAddress();
         prim.m_geometryDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(float) * 3;
 
+        int32_t materialId = shape.mesh.material_ids[0];
+        const tinyobj::material_t& material = materials[materialId];
+        prim.m_material.diffuse = XMVECTOR{material.diffuse[0], material.diffuse[1], material.diffuse[2], 1};
+
 		m_primitives.push_back(prim);
     }
 #endif
@@ -645,13 +648,12 @@ void D3D12RaytracingHelloWorld::BuildShaderTables()
     // Initialize shader records.
     assert(LocalRootSignatureParams::ViewportConstantSlot == 0  && LocalRootSignatureParams::Count == 1);
     struct RootArguments {
-        RayGenConstantBuffer cb;
+        PerMaterialCB cb;
     } rootArguments;
-    rootArguments.cb = m_rayGenCB;
     UINT rootArgumentsSize = sizeof(rootArguments);
 
     // Shader record = {{ Shader ID }, { RootArguments }}
-    UINT shaderRecordSize = shaderIdentifierSize + rootArgumentsSize;
+    m_shaderRecordSize = shaderIdentifierSize + rootArgumentsSize;
 
     ShaderRecord rayGenShaderRecord(rayGenShaderIdentifier, shaderIdentifierSize, &rootArguments, rootArgumentsSize);
     rayGenShaderRecord.AllocateAsUploadBuffer(device, &m_rayGenShaderTable, L"RayGenShaderTable");
@@ -659,7 +661,15 @@ void D3D12RaytracingHelloWorld::BuildShaderTables()
     ShaderRecord missShaderRecord(missShaderIdentifier, shaderIdentifierSize, &rootArguments, rootArgumentsSize);
     missShaderRecord.AllocateAsUploadBuffer(device, &m_missShaderTable, L"MissShaderTable");
 
-    ShaderRecord hitGroupShaderRecord(hitGroupShaderIdentifier, shaderIdentifierSize, &rootArguments, rootArgumentsSize);
+    std::vector<ShaderRecord::PointerWithSize> hitGroupShadersTbl;
+    std::vector<ShaderRecord::PointerWithSize> rootArgumentsTbl;
+
+    for (int32_t i = 0; i < m_primitives.size(); ++i)
+    {
+        hitGroupShadersTbl.push_back(ShaderRecord::PointerWithSize{hitGroupShaderIdentifier, shaderIdentifierSize});
+        rootArgumentsTbl.push_back(ShaderRecord::PointerWithSize{&m_primitives[i].m_material, rootArgumentsSize});
+    }
+    ShaderRecord hitGroupShaderRecord(hitGroupShadersTbl, rootArgumentsTbl);
     hitGroupShaderRecord.AllocateAsUploadBuffer(device, &m_hitGroupShaderTable, L"HitGroupShaderTable");
 }
 
@@ -779,7 +789,7 @@ void D3D12RaytracingHelloWorld::DoRaytracing()
     {
         dispatchDesc->HitGroupTable.StartAddress = m_hitGroupShaderTable->GetGPUVirtualAddress();
         dispatchDesc->HitGroupTable.SizeInBytes = m_hitGroupShaderTable->GetDesc().Width;
-        dispatchDesc->HitGroupTable.StrideInBytes = dispatchDesc->HitGroupTable.SizeInBytes;
+        dispatchDesc->HitGroupTable.StrideInBytes = m_shaderRecordSize;
         dispatchDesc->MissShaderTable.StartAddress = m_missShaderTable->GetGPUVirtualAddress();
         dispatchDesc->MissShaderTable.SizeInBytes = m_missShaderTable->GetDesc().Width;
         dispatchDesc->MissShaderTable.StrideInBytes = dispatchDesc->MissShaderTable.SizeInBytes;
@@ -824,24 +834,6 @@ void D3D12RaytracingHelloWorld::DoRaytracing()
 void D3D12RaytracingHelloWorld::UpdateForSizeChange(UINT width, UINT height)
 {
     DXSample::UpdateForSizeChange(width, height);
-    float border = 0.1f;
-    if (m_width <= m_height)
-    {
-        m_rayGenCB.stencil =
-        {
-            -1 + border, -1 + border * m_aspectRatio,
-            1.0f - border, 1 - border * m_aspectRatio
-        };
-    }
-    else
-    {
-        m_rayGenCB.stencil =
-        {
-            -1 + border / m_aspectRatio, -1 + border,
-             1 - border / m_aspectRatio, 1.0f - border
-        };
-
-    }
 }
 
 // Copy the raytracing output to the backbuffer.
