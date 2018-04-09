@@ -124,10 +124,13 @@ inline void AllocateUploadBuffer(ID3D12Device* pDevice, void *pData, UINT64 data
     {
         (*ppResource)->SetName(resourceName);
     }
-    void *pMappedData;
-    (*ppResource)->Map(0, nullptr, &pMappedData);
-    memcpy(pMappedData, pData, datasize);
-    (*ppResource)->Unmap(0, nullptr);
+    if (pData != nullptr)
+    {
+        void* pMappedData;
+        (*ppResource)->Map(0, nullptr, &pMappedData);
+        memcpy(pMappedData, pData, datasize);
+        (*ppResource)->Unmap(0, nullptr);
+    }
 }
 
 // Pretty-print a state object tree.

@@ -16,6 +16,7 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 #include "Math/Vector.h"
+#include <random>
 
 namespace GameCore
 {
@@ -98,6 +99,7 @@ void D3D12RaytracingHelloWorld::CreateDeviceDependentResources()
     CreateDescriptorHeap();
     CreateRaytracingOutputResource();
     CreateConstantBuffers();
+    CreateRandomSamplesBuffer();
     BuildGeometry();
     BuildAccelerationStructures();
     BuildShaderTables();
@@ -141,6 +143,11 @@ void D3D12RaytracingHelloWorld::CreateRootSignatures()
             CD3DX12_DESCRIPTOR_RANGE descriptor;
             descriptor.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 16, 32);
             rootParameters[GlobalRootSignatureParams::IndexBuffersSlot].InitAsDescriptorTable(1, &descriptor);
+        }
+        {
+            CD3DX12_DESCRIPTOR_RANGE descriptor;
+            descriptor.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 1);
+            rootParameters[GlobalRootSignatureParams::RndSamplesBufferSlot].InitAsDescriptorTable(1, &descriptor);
         }
         CD3DX12_ROOT_SIGNATURE_DESC globalRootSignatureDesc(ARRAYSIZE(rootParameters), rootParameters);
         SerializeAndCreateRaytracingRootSignature(globalRootSignatureDesc, &m_raytracingGlobalRootSignature);
@@ -222,7 +229,7 @@ void D3D12RaytracingHelloWorld::CreateRaytracingPipelineStateObject()
     // Shader config
     // Defines the maximum sizes in bytes for the ray payload and attribute structure.
     auto shaderConfig = raytracingPipeline.CreateSubobject<CD3D12_RAYTRACING_SHADER_CONFIG_SUBOBJECT>();
-    UINT payloadSize = 4 * sizeof(float);   // float4 color
+    UINT payloadSize = 4 * sizeof(float) + 4 * sizeof(uint32_t);   // float4 color
     UINT attributeSize = 2 * sizeof(float); // float2 barycentrics
     shaderConfig->Config(payloadSize, attributeSize);
 
@@ -251,7 +258,7 @@ void D3D12RaytracingHelloWorld::CreateRaytracingPipelineStateObject()
     // Setting max recursion depth at 1 ~ primary rays only. 
     // Drivers may apply optimization strategies for low recursion depths, 
     // so it is recommended to set max recursion depth as low as needed. 
-    pipelineConfig->Config(1);  
+    pipelineConfig->Config(2);  
 
 #if _DEBUG
     PrintStateObjectDesc(raytracingPipeline);
@@ -308,6 +315,57 @@ void D3D12RaytracingHelloWorld::CreateConstantBuffers()
     }
 }
 
+void D3D12RaytracingHelloWorld::CreateRandomSamplesBuffer()
+{
+    auto device = m_deviceResources->GetD3DDevice();
+
+    // Create random samples and counter buffer
+    AllocateUAVBuffer(device,
+        m_numOfRndSamples * sizeof(RndSamples),
+        &m_rndSamples,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        L"RandomSamplesBuffer");
+    AllocateUAVBuffer(device,
+        sizeof(int32_t),
+        &m_rndSamplesCounter,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        L"RandomSamplesCounterBuffer");
+
+    AllocateUploadBuffer(device,
+        nullptr,
+        m_numOfRndSamples * sizeof(RndSamples),
+        &m_rndSamplesUploadCopy,
+        L"RandomSamplesBufferUploadCopy");
+
+    // Create copys on upload heap
+    AllocateUploadBuffer(device,
+        nullptr,
+        sizeof(int32_t),
+        &m_rndSamplesCounterUploadCopy,
+        L"RandomSamplesCounterBufferUploadCopy");
+
+    {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+        uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+        uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        uavDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
+        uavDesc.Buffer.NumElements = m_numOfRndSamples;
+        uavDesc.Buffer.StructureByteStride = sizeof(RndSamples);
+        uavDesc.Buffer.CounterOffsetInBytes = 0;
+
+        D3D12_CPU_DESCRIPTOR_HANDLE descriptor;
+        uint32_t heapIdx = AllocateDescriptor(&descriptor);
+        device->CreateUnorderedAccessView(m_rndSamples.Get(), m_rndSamplesCounter.Get(), &uavDesc, descriptor);
+        m_rndSamplesUAVGpuDescriptor = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_descriptorHeap->GetGPUDescriptorHandleForHeapStart(), heapIdx, m_descriptorSize);
+    }
+
+    {
+        D3D12_CPU_DESCRIPTOR_HANDLE descriptor;
+        uint32_t heapIdx = AllocateDescriptor(&descriptor);
+        m_rndSamplesCounterUAVGpuDescriptor = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_descriptorHeap->GetGPUDescriptorHandleForHeapStart(), heapIdx, m_descriptorSize);
+    }
+}
+
 void D3D12RaytracingHelloWorld::CreateDescriptorHeap()
 {
     auto device = m_deviceResources->GetD3DDevice();
@@ -318,7 +376,8 @@ void D3D12RaytracingHelloWorld::CreateDescriptorHeap()
     // 1 - raytracing output texture SRV
     // 16 - normal buffers SRV
     // 16 - index buffers SRV
-    descriptorHeapDesc.NumDescriptors = 3 + 16 + 16; 
+    // 2 - Random samples and counter buffer UAV
+    descriptorHeapDesc.NumDescriptors = 3 + 16 + 16 + 2;
     descriptorHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     descriptorHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     descriptorHeapDesc.NodeMask = 0;
@@ -486,7 +545,7 @@ void D3D12RaytracingHelloWorld::BuildGeometry()
         srvDesc.Format = DXGI_FORMAT_UNKNOWN;
         srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         srvDesc.Buffer.FirstElement = 0;
-        srvDesc.Buffer.NumElements = shape.mesh.normals.size() / 3;
+        srvDesc.Buffer.NumElements = UINT(shape.mesh.normals.size() / 3);
         srvDesc.Buffer.StructureByteStride = sizeof(float) * 3;
         srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
 
@@ -498,7 +557,7 @@ void D3D12RaytracingHelloWorld::BuildGeometry()
         }
     }
 
-    for (int i = shapes.size(); i < 16; ++i)
+    for (int i = int(shapes.size()); i < 16; ++i)
     {
         D3D12_CPU_DESCRIPTOR_HANDLE cpuDescriptorHandle;
         UINT descriptorHeapIndex = AllocateDescriptor(&cpuDescriptorHandle, 0xFFFFFFFF);
@@ -517,7 +576,7 @@ void D3D12RaytracingHelloWorld::BuildGeometry()
         srvDesc.Format = DXGI_FORMAT_UNKNOWN;
         srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         srvDesc.Buffer.FirstElement = 0;
-        srvDesc.Buffer.NumElements = shape.mesh.indices.size() / 3;
+        srvDesc.Buffer.NumElements = UINT(shape.mesh.indices.size() / 3);
         srvDesc.Buffer.StructureByteStride = sizeof(uint32_t) * 3;
         srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
 
@@ -529,7 +588,7 @@ void D3D12RaytracingHelloWorld::BuildGeometry()
         }
     }
 
-    for (int i = shapes.size(); i < 16; ++i)
+    for (int i = int(shapes.size()); i < 16; ++i)
     {
         D3D12_CPU_DESCRIPTOR_HANDLE cpuDescriptorHandle;
         UINT descriptorHeapIndex = AllocateDescriptor(&cpuDescriptorHandle, 0xFFFFFFFF);
@@ -815,6 +874,10 @@ void D3D12RaytracingHelloWorld::OnUpdate()
     m_perFrameCBContent.viewToWorld = Math::Invert(m_camera.GetViewMatrix());
     m_perFrameCBContent.projectionToWorld = Math::Invert(m_camera.GetViewProjMatrix());
 
+    if (abs(GameInput::GetAnalogInput(GameInput::kAnalogMouseX)) > 0.0 || abs(GameInput::GetAnalogInput(GameInput::kAnalogMouseY)) > 0.0)
+    {
+        m_iter = 0;
+    }
 
     if (0)
     {
@@ -863,6 +926,7 @@ void D3D12RaytracingHelloWorld::DoRaytracing()
 {
     auto commandList = m_deviceResources->GetCommandList();
     
+
     auto DispatchRays = [&](auto* commandList, auto* stateObject, auto* dispatchDesc)
     {
         dispatchDesc->HitGroupTable.StartAddress = m_hitGroupShaderTable->GetGPUVirtualAddress();
@@ -886,6 +950,9 @@ void D3D12RaytracingHelloWorld::DoRaytracing()
         ID3D12Resource* pCB = m_perFrameCB[m_cbIdx].Get();
         m_cbIdx = (m_cbIdx + 1) % FrameCount;
 
+        ++m_iter;
+        m_perFrameCBContent.weight = XMVECTOR{(m_iter-1)/m_iter, 1/m_iter, 0, 0};
+
         void* pMappedData = nullptr;
         pCB->Map(0, nullptr, &pMappedData);
         memcpy(pMappedData, &m_perFrameCBContent, sizeof(m_perFrameCBContent));
@@ -893,11 +960,93 @@ void D3D12RaytracingHelloWorld::DoRaytracing()
 
         D3D12_FALLBACK_DISPATCH_RAYS_DESC dispatchDesc = {};
         m_fallbackCommandList->SetDescriptorHeaps(1, m_descriptorHeap.GetAddressOf());
+
+
+        {
+            {
+                uint32_t initialCounter = 0;
+                void* pMappedData;
+                m_rndSamplesCounterUploadCopy->Map(0, nullptr, &pMappedData);
+                memcpy(pMappedData, &initialCounter, sizeof(initialCounter));
+                m_rndSamplesCounterUploadCopy->Unmap(0, nullptr);
+            }
+
+            {
+#if 0
+                if (m_allRndSamples.get() == nullptr)
+                {
+                    m_allRndSamples = unique_ptr<RndSamples[]>{ new RndSamples[m_numAllRndSamples] };
+
+                    std::random_device rd;
+                    std::mt19937 gen(rd());
+                    std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+
+                    for (int32_t i = 0; i < m_numAllRndSamples; ++i)
+                    {
+                        m_allRndSamples[i].p0 = dis(gen);
+                        m_allRndSamples[i].p1 = dis(gen);
+                    }
+                }
+
+                int32_t sampleIdx = (std::rand() * 256) % m_numAllRndSamples;
+                int32_t sz0 = min(m_numAllRndSamples - sampleIdx, m_numOfRndSamples);
+                int32_t sz1 = max(m_numOfRndSamples - sz0, 0);
+                assert(sz0 > 0 && sz1 >= 0 && (sz0 + sz1) == m_numOfRndSamples);
+
+                void* pMappedData;
+                m_rndSamplesUploadCopy->Map(0, nullptr, &pMappedData);
+                memcpy(pMappedData, (RndSamples*)m_allRndSamples.get() + sampleIdx, sz0 * sizeof(RndSamples));
+                if (sz1 > 0)
+                {
+                    memcpy((RndSamples*)pMappedData + sz0, (RndSamples*)m_allRndSamples.get(), sz1 * sizeof(RndSamples));
+                }
+                m_rndSamplesUploadCopy->Unmap(0, nullptr);
+#else
+                unique_ptr<RndSamples[]> rndSamples = unique_ptr<RndSamples[]>{ new RndSamples[m_numOfRndSamples] };
+
+                std::random_device rd;
+                std::mt19937 gen(rd());
+                std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+
+                for (int32_t i = 0; i < m_numOfRndSamples; ++i)
+                {
+                    rndSamples[i].p0 = dis(gen);
+                    rndSamples[i].p1 = dis(gen);
+                }
+
+                void* pMappedData;
+                m_rndSamplesUploadCopy->Map(0, nullptr, &pMappedData);
+                memcpy(pMappedData, rndSamples.get(), m_numOfRndSamples * sizeof(RndSamples));
+                m_rndSamplesUploadCopy->Unmap(0, nullptr);
+#endif
+            }
+
+            {
+                D3D12_RESOURCE_BARRIER preCopyBarriers[2];
+                preCopyBarriers[0] = CD3DX12_RESOURCE_BARRIER::Transition(m_rndSamples.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+                preCopyBarriers[1] = CD3DX12_RESOURCE_BARRIER::Transition(m_rndSamplesCounter.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+                commandList->ResourceBarrier(ARRAYSIZE(preCopyBarriers), preCopyBarriers);
+            }
+
+            commandList->CopyResource(m_rndSamples.Get(), m_rndSamplesUploadCopy.Get());
+            commandList->CopyResource(m_rndSamplesCounter.Get(), m_rndSamplesCounterUploadCopy.Get());
+
+            {
+                D3D12_RESOURCE_BARRIER afterCopyBarriers[2];
+                afterCopyBarriers[0] = CD3DX12_RESOURCE_BARRIER::Transition(m_rndSamples.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                afterCopyBarriers[1] = CD3DX12_RESOURCE_BARRIER::Transition(m_rndSamplesCounter.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                commandList->ResourceBarrier(ARRAYSIZE(afterCopyBarriers), afterCopyBarriers);
+            }
+        }
+
+
+
         commandList->SetComputeRootDescriptorTable(GlobalRootSignatureParams::OutputViewSlot, m_raytracingOutputResourceUAVGpuDescriptor);
         m_fallbackCommandList->SetTopLevelAccelerationStructure(GlobalRootSignatureParams::AccelerationStructureSlot, m_fallbackTopLevelAccelerationStructurePointer);
         commandList->SetComputeRootConstantBufferView(GlobalRootSignatureParams::PerFrameCBSlot, pCB->GetGPUVirtualAddress());
         commandList->SetComputeRootDescriptorTable(GlobalRootSignatureParams::NormalBuffersSlot, m_normalBuffersSRVGpuDescriptor);
         commandList->SetComputeRootDescriptorTable(GlobalRootSignatureParams::IndexBuffersSlot, m_indexBuffersSRVGpuDescriptor);
+        commandList->SetComputeRootDescriptorTable(GlobalRootSignatureParams::RndSamplesBufferSlot, m_rndSamplesUAVGpuDescriptor);
         DispatchRays(m_fallbackCommandList.Get(), m_fallbackStateObject.Get(), &dispatchDesc);
     }
     else // DirectX Raytracing

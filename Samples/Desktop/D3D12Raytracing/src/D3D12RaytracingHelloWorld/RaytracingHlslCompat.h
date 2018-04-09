@@ -17,11 +17,14 @@ typedef DirectX::XMMATRIX float4x4;
 typedef DirectX::XMVECTOR float4;
 #endif
 
+#define MATH_CONST_PI 3.1415926535897
+
 struct PerFrameCB
 {
     float4x4 projectionToWorld;
     float4x4 viewToWorld;
     float4 cameraPosition;
+    float4 weight;
 };
 
 struct PerMaterialCB

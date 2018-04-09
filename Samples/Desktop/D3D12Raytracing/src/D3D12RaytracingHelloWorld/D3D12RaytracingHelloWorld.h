@@ -38,6 +38,7 @@ namespace GlobalRootSignatureParams {
         PerFrameCBSlot,
         NormalBuffersSlot,
         IndexBuffersSlot,
+        RndSamplesBufferSlot,
         Count 
     };
 }
@@ -107,6 +108,7 @@ private:
     PerFrameCB m_perFrameCBContent;
     ComPtr<ID3D12Resource> m_perFrameCB[FrameCount];
     uint32_t m_cbIdx = 0;
+    float m_iter = 0.0;
 
     // Geometry
     std::vector<Primitive> m_primitives;
@@ -143,6 +145,22 @@ private:
     Math::Camera m_camera;
     GameCore::CameraController m_cameraController;
 
+    struct RndSamples
+    {
+        float p0;
+        float p1;
+    };
+    int32_t m_numOfRndSamples = 32*1024;
+    ComPtr<ID3D12Resource> m_rndSamples;
+    ComPtr<ID3D12Resource> m_rndSamplesCounter;
+    ComPtr<ID3D12Resource> m_rndSamplesUploadCopy;
+    ComPtr<ID3D12Resource> m_rndSamplesCounterUploadCopy;
+    D3D12_GPU_DESCRIPTOR_HANDLE m_rndSamplesUAVGpuDescriptor;
+    D3D12_GPU_DESCRIPTOR_HANDLE m_rndSamplesCounterUAVGpuDescriptor;
+
+    int32_t m_numAllRndSamples = 1024*1024*8;
+    std::unique_ptr<RndSamples[]> m_allRndSamples;
+
     void ParseCommandLineArgs(WCHAR* argv[], int argc);
     void RecreateD3D();
     void DoRaytracing();   
@@ -157,6 +175,7 @@ private:
     void CreateDescriptorHeap();
     void CreateRaytracingOutputResource();
     void CreateConstantBuffers();
+    void CreateRandomSamplesBuffer();
     void BuildGeometry();
     void BuildAccelerationStructures();
     void BuildShaderTables();
